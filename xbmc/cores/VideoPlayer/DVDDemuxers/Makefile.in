@@ -10,6 +10,9 @@ SRCS += DVDDemuxUtils.cpp
 SRCS += DVDDemuxVobsub.cpp
 SRCS += DVDDemuxCC.cpp
 SRCS += DVDFactoryDemuxer.cpp
+SRCS += DemuxTimeline.cpp
+SRCS += MatroskaParser.cpp
+SRCS += EbmlParser.cpp
 
 LIB = DVDDemuxers.a
 
