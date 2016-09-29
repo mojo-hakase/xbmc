@@ -29,6 +29,7 @@
 #include "DVDDemuxCDDA.h"
 #include "DVDDemuxClient.h"
 #include "DemuxMultiSource.h"
+#include "DemuxTimeline.h"
 #include "pvr/PVRManager.h"
 #include "utils/log.h"
 #include "utils/URIUtils.h"
@@ -120,7 +121,12 @@ CDVDDemux* CDVDFactoryDemuxer::CreateDemuxer(CDVDInputStream* pInputStream, bool
 
   std::unique_ptr<CDVDDemuxFFmpeg> demuxer(new CDVDDemuxFFmpeg());
   if(demuxer->Open(pInputStream, streaminfo, fileinfo))
-    return demuxer.release();
+  {
+    if (true)
+      return new CDemuxTimeline(demuxer.release());
+    else
+      return demuxer.release();
+  }
   else
     return NULL;
 }
