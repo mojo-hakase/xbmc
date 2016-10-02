@@ -2,12 +2,17 @@
 
 #include "DVDDemux.h"
 
+#include <list>
+#include <map>
+
 class CDemuxTimeline : public CDVDDemux
 {
 
 public:
-  CDemuxTimeline(CDVDDemux *pRelayedDemuxer);
+  CDemuxTimeline();
   virtual ~CDemuxTimeline();
+
+  static CDemuxTimeline* CreateTimeline(CDVDDemux *primaryDemuxer/*, AVFormatContext *avfc*/);
 
   /*
    * Reset the entire demuxer (same result as closing and opening it)
@@ -96,7 +101,37 @@ public:
   int GetNrOfStreams(StreamType streamType);
 
 private:
-  CDVDDemux *m_pRelayedDemuxer;
+  void SwitchToNextDemuxer();
+
+  CDVDDemux *m_pPrimaryDemuxer;
+
+  struct DemuxerInfo {
+    CDVDDemux *pDemuxer;
+    double nextPts;
+    //CDVDDemux *pLastDemuxPacket;
+    bool sendLastPacket;
+    DemuxerInfo(CDVDDemux *demuxer) : pDemuxer(demuxer) {}
+    ~DemuxerInfo() {delete pDemuxer;}
+  };
+
+  struct ChapterInfo {
+    DemuxerInfo *pDemuxerInfo;
+    int startSrcTime;  // in MSEC
+    int startDispTime; // in MSEC
+    int duration; // in MSEC
+    int stopSrcTime() {return startSrcTime + duration;}
+    int stopDispTime() {return startDispTime + duration;}
+    int shiftTime() {return startDispTime - startSrcTime;}
+    int index;
+    std::string title;
+  };
+
+  std::list<DemuxerInfo> m_demuxer;
+  std::map<int,ChapterInfo> m_chapters;  // maps chapter end display time to chapter info
+
+  DemuxerInfo *m_pCurDemuxInfo;
+  ChapterInfo *m_pCurChapter;
+  double m_lastDispPts;
 };
 
 // vim: ts=2 sw=2 expandtab

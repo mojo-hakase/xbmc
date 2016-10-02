@@ -122,10 +122,11 @@ CDVDDemux* CDVDFactoryDemuxer::CreateDemuxer(CDVDInputStream* pInputStream, bool
   std::unique_ptr<CDVDDemuxFFmpeg> demuxer(new CDVDDemuxFFmpeg());
   if(demuxer->Open(pInputStream, streaminfo, fileinfo))
   {
-    if (true)
-      return new CDemuxTimeline(demuxer.release());
+    CDVDDemux *pDemuxer = demuxer.release();
+    if(CDemuxTimeline *timeline = CDemuxTimeline::CreateTimeline(pDemuxer))
+      return timeline;
     else
-      return demuxer.release();
+      return pDemuxer;
   }
   else
     return NULL;
