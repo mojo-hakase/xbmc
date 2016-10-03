@@ -526,8 +526,6 @@ bool CDVDDemuxFFmpeg::Open(CDVDInputStream* pInput, bool streaminfo, bool filein
   m_displayTime = 0;
   m_dtsAtDisplayTime = DVD_NOPTS_VALUE;
 
-  //this->m_pFormatContext
-
   return true;
 }
 

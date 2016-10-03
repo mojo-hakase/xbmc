@@ -17,7 +17,7 @@ CDemuxTimeline::CDemuxTimeline() {}
 
 CDemuxTimeline::~CDemuxTimeline() {}
 
-CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer/*, AVFormatContext *avfc*/)
+CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
 {
   std::string filename = demuxer->GetFileName();
   std::string csvFilename = filename + ".OrderedChapters.csv";
