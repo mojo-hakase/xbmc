@@ -4,6 +4,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
 class CDemuxTimeline : public CDVDDemux
 {
@@ -98,39 +99,37 @@ public:
   CDemuxStream* GetStream(int iStreamId) const override;
   std::string GetStreamCodecName(int iStreamId) override;
 
-  int GetNrOfStreams(StreamType streamType);
-
 private:
-  void SwitchToNextDemuxer();
-
-  CDVDDemux *m_pPrimaryDemuxer;
+  bool SwitchToNextDemuxer();
 
   struct DemuxerInfo {
-    CDVDDemux *pDemuxer;
     double nextPts;
-    //CDVDDemux *pLastDemuxPacket;
+    //CDemuxPacket *pLastDemuxPacket;
     bool sendLastPacket;
-    DemuxerInfo(CDVDDemux *demuxer) : pDemuxer(demuxer) {}
-    ~DemuxerInfo() {delete pDemuxer;}
   };
 
   struct ChapterInfo {
-    DemuxerInfo *pDemuxerInfo;
+    CDVDDemux *demuxer;
     int startSrcTime;  // in MSEC
     int startDispTime; // in MSEC
     int duration; // in MSEC
     int stopSrcTime() {return startSrcTime + duration;}
     int stopDispTime() {return startDispTime + duration;}
     int shiftTime() {return startDispTime - startSrcTime;}
-    int index;
+    unsigned int index;
     std::string title;
   };
 
-  std::list<DemuxerInfo> m_demuxer;
-  std::map<int,ChapterInfo> m_chapters;  // maps chapter end display time to chapter info
+  CDVDDemux *m_primaryDemuxer;
 
-  DemuxerInfo *m_pCurDemuxInfo;
-  ChapterInfo *m_pCurChapter;
+  //std::list<std::shared_ptr<CDVDDemux>> m_demuxer;
+  std::list<std::shared_ptr<CDVDDemux>> m_demuxer;
+  std::map<CDVDDemux*,DemuxerInfo> m_demuxerInfos;
+
+  std::vector<ChapterInfo> m_chapters;
+  std::map<int,ChapterInfo*> m_chapterMap;  // maps chapter end display time in msec to chapter info
+
+  ChapterInfo *m_curChapter;
   double m_lastDispPts;
 };
 

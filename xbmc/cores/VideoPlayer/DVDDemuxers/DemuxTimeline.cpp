@@ -4,13 +4,14 @@
 #include <iostream>
 #include <memory>
 
+#include "DVDClock.h"
 #include "DVDDemuxPacket.h"
 #include "DVDFactoryDemuxer.h"
-#include "DVDInputStreams/DVDInputStreamFile.h"
+#include "DVDInputStreams/DVDInputStream.h"
 #include "DVDInputStreams/DVDFactoryInputStream.h"
 #include "filesystem/File.h"
+#include "utils/log.h"
 #include "utils/StringUtils.h"
-#include "../DVDClock.h"
 
 CDemuxTimeline::CDemuxTimeline() {}
 
@@ -24,13 +25,13 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer/*, AVFormatCon
     return nullptr;
 
   std::string dirname = filename.substr(0, filename.rfind('/') + 1);
-  
+
   CDemuxTimeline *timeline = new CDemuxTimeline;
-  timeline->m_pPrimaryDemuxer = demuxer;
-  timeline->m_demuxer.emplace_front(demuxer);
+  timeline->m_primaryDemuxer = demuxer;
+  timeline->m_demuxer.emplace_back(demuxer);
+  timeline->m_demuxerInfos[demuxer];
 
   int timelineLen = 0;
-  int index = 0;
   XFILE::CFile csvFile;
   csvFile.Open(csvFilename);
   int bufferSize = 4096;
@@ -40,15 +41,13 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer/*, AVFormatCon
     int sh, sm, ss, sc, eh, em, es, ec;
     if (!sscanf(szLine, "%d:%d:%d.%3d%*[^,],%d:%d:%d.%3d%*[^,],", &sh, &sm, &ss, &sc, &eh, &em, &es, &ec))
       continue;
-    
+
     int startTime = (((sh * 60) + sm) * 60 + ss) * 1000 + sc;
     int endTime   = (((eh * 60) + em) * 60 + es) * 1000 + ec;
     if (startTime > endTime)
       continue;
-    int dispTime = timelineLen;
-    timelineLen += (endTime - startTime);
 
-    DemuxerInfo *chapterDemuxInfo = &timeline->m_demuxer.front();
+    CDVDDemux *chapterDemuxer = timeline->m_primaryDemuxer;
     std::string strLine(szLine);
     size_t pos = strLine.find(',', 0);
     pos = strLine.find(',', pos + 1);
@@ -56,155 +55,121 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer/*, AVFormatCon
     std::string sourceFilename = strLine.substr(pos);
     if (StringUtils::Trim(sourceFilename).size())
     {
-      //CDVDInputStream *inStream = new CDVDInputStreamFile(CFileItem(dirname + sourceFilename, false));
-      CDVDInputStream *inStream = CDVDFactoryInputStream::CreateInputStream(nullptr, CFileItem(dirname + sourceFilename, false)); 
+      CDVDInputStream *inStream = CDVDFactoryInputStream::CreateInputStream(nullptr, CFileItem(dirname + sourceFilename, false));
       inStream->Open();
-      CDVDDemux *chapterDemux = CDVDFactoryDemuxer::CreateDemuxer(inStream);
-      if (!chapterDemux)
+      chapterDemuxer = CDVDFactoryDemuxer::CreateDemuxer(inStream);
+      if (!chapterDemuxer)
         continue;
-      timeline->m_demuxer.emplace_back(chapterDemux);
-      chapterDemuxInfo = &timeline->m_demuxer.back();
+      timeline->m_demuxer.emplace_back(chapterDemuxer);
+      timeline->m_demuxerInfos[chapterDemuxer];
     }
+    int dispTime = timelineLen;
+    timelineLen += (endTime - startTime);
 
-    ChapterInfo &newChapter = timeline->m_chapters[timelineLen];
-    newChapter.startSrcTime = startTime;
-    newChapter.startDispTime = dispTime;
-    newChapter.duration = (endTime - startTime);
-    newChapter.pDemuxerInfo = chapterDemuxInfo;
-    newChapter.index = index++;
+    timeline->m_chapters.emplace_back(ChapterInfo {
+      .demuxer = chapterDemuxer,
+      .startSrcTime = startTime,
+      .startDispTime = dispTime,
+      .duration = (endTime - startTime),
+      .index = timeline->m_chapters.size()
+    });
   }
+  for (auto &chapter : timeline->m_chapters)
+    timeline->m_chapterMap[chapter.stopDispTime() - 1] = &chapter;
 
-  timeline->m_pCurChapter = &timeline->m_chapters.begin()->second;
-  timeline->m_pCurDemuxInfo = timeline->m_pCurChapter->pDemuxerInfo;
+  timeline->m_curChapter = &timeline->m_chapters.front();
   return timeline;
 }
 
-void CDemuxTimeline::SwitchToNextDemuxer()
+bool CDemuxTimeline::SwitchToNextDemuxer()
 {
-  auto it = m_chapters.lower_bound(m_pCurChapter->stopDispTime());
-  ++it;
-  m_pCurChapter = &it->second;
-  m_pCurDemuxInfo = m_pCurChapter->pDemuxerInfo;
-  //m_pCurDemuxInfo->pDemuxer->SeekTime(m_pCurChapter->startSrcTime);
-  m_pCurDemuxInfo->pDemuxer->SeekTime(m_pCurChapter->startSrcTime, true);
+  if (m_curChapter->index + 1 == m_chapters.size())
+    return false;
+  CLog::Log(LOGDEBUG, "TimelineDemuxer: Switch Demuxer");
+  m_curChapter = &m_chapters[m_curChapter->index + 1];
+  m_curChapter->demuxer->SeekTime(m_curChapter->startSrcTime);
+  m_curChapter->demuxer->SeekTime(m_curChapter->startSrcTime, true);
+  return true;
 }
 
 void CDemuxTimeline::Reset()
 {
   for (auto &demuxer : m_demuxer)
-    demuxer.pDemuxer->Reset();
-  m_pCurChapter = &m_chapters.begin()->second;
-  m_pCurDemuxInfo = m_pCurChapter->pDemuxerInfo;
-  if (m_pCurChapter->startSrcTime != 0)
-    m_pCurDemuxInfo->pDemuxer->SeekTime(m_pCurChapter->startSrcTime);
+    demuxer->Reset();
+  m_curChapter = m_chapterMap.begin()->second;
+  if (m_curChapter->startSrcTime != 0)
+    m_curChapter->demuxer->SeekTime(m_curChapter->startSrcTime);
 }
 
 void CDemuxTimeline::Abort()
 {
-  m_pCurDemuxInfo->pDemuxer->Abort();
+  m_curChapter->demuxer->Abort();
 }
 
 void CDemuxTimeline::Flush()
 {
-  m_pCurDemuxInfo->pDemuxer->Flush();
+  m_curChapter->demuxer->Flush();
 }
 
-void dump_packet_info(DemuxPacket *packet)
-{
-  std::cout << "packet:" << std::endl;
-  std::cout << "\tdts:\t" << packet->dts << std::endl;
-  std::cout << "\tpts:\t" << packet->pts << std::endl;
-  std::cout << "\tduration:\t" << packet->duration << std::endl;
-  std::cout << "\tdispTime:\t" << packet->dispTime << std::endl;
-  std::cout << "\tdemuxerIds:\t" << packet->demuxerId << std::endl;
-  std::cout << "\tiStreamId:\t" << packet->iStreamId << std::endl;
-  std::cout << "\tiGroupId:\t" << packet->iGroupId << std::endl;
-}
+#define GET_PTS(x) ((x)->dts!=DVD_NOPTS_VALUE ? (x)->dts : (x)->pts)
 
 DemuxPacket* CDemuxTimeline::Read()
 {
-#define CHAPTERED_MODE
-  CDVDDemux *demuxer;
-  DemuxPacket *packet;
-#ifdef CHAPTERED_MODE
-  double pts = 0;
-#else
-  static double pts = 0;
-  static double startDispPts = 0;
-  static double duration = 0;
-#endif
+  DemuxPacket *packet = nullptr;
+  double pts = std::numeric_limits<double>::infinity();
   double dispPts;
 
-  //if (!m_pCurDemuxInfo || !m_pCurDemuxInfo->pDemuxer)
-  //  packet = nullptr;
-  demuxer = m_pCurDemuxInfo->pDemuxer;
-  packet = demuxer->Read();
-#ifdef CHAPTERED_MODE
-  //if (!packet)
-  //  return nullptr;
-#endif
+  packet = m_curChapter->demuxer->Read();
+  for (packet && (pts = GET_PTS(packet));
+    !packet ||
+    pts + packet->duration < DVD_MSEC_TO_TIME(m_curChapter->startSrcTime) ||
+    pts >= DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime());
+    packet && (pts = GET_PTS(packet)))
+  {
+    if (!packet || pts >= DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime()))
+      if (!SwitchToNextDemuxer())
+        return nullptr;
+    packet = m_curChapter->demuxer->Read();
+  }
 
-  if (packet)
-  {
-    pts = packet->dts != DVD_NOPTS_VALUE ? packet->dts : packet->pts;
-#ifndef CHAPTERED_MODE
-    duration = packet->duration;
-#endif
-  }
-#ifdef CHAPTERED_MODE
-  while (pts >= DVD_MSEC_TO_TIME(m_pCurChapter->stopSrcTime()))
-#else
-  while (!packet)
-#endif
-  {
-    //m_pCurDemuxInfo->pLastDemuxPacket = packet;
-    std::cout << "SWITCH DEMUXER" << std::endl;
-    SwitchToNextDemuxer();
-    demuxer = m_pCurDemuxInfo->pDemuxer;
-    packet = demuxer->Read();
-    if (!packet)
-      return nullptr;
-#ifndef CHAPTERED_MODE
-    startDispPts = pts + duration;
-#endif
-    pts = packet->dts != DVD_NOPTS_VALUE ? packet->dts : packet->pts;
-  }
-#ifdef CHAPTERED_MODE
-  dispPts = pts + DVD_MSEC_TO_TIME(m_pCurChapter->shiftTime());
-  packet->dts = dispPts; // probably shouldn't be done
-  packet->pts = dispPts; // probably shouldn't be done
-  packet->duration = std::min(packet->duration, DVD_MSEC_TO_TIME(m_pCurChapter->stopSrcTime()) - pts);
-  packet->dispTime = DVD_TIME_TO_MSEC(pts) + m_pCurChapter->shiftTime();
-#else
-  dispPts = pts + startDispPts;
-  packet->dts = dispPts; // probably shouldn't be done
-  packet->pts = dispPts; // probably shouldn't be done
-  packet->dispTime = DVD_TIME_TO_MSEC(dispPts);
-#endif
+  dispPts = pts + DVD_MSEC_TO_TIME(m_curChapter->shiftTime());
+  packet->dts = dispPts;
+  packet->pts = dispPts;
+  packet->duration = std::min(packet->duration, DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime()) - pts);
+  packet->dispTime = DVD_TIME_TO_MSEC(pts) + m_curChapter->shiftTime();
   packet->demuxerId = this->GetDemuxerId();
 
-  dump_packet_info(packet);
+  if (this->GetStream(packet->iStreamId)->type == STREAM_SUBTITLE)
+    std::cout << "PACKET: (" << int(packet->pts/1000) << ")-(" << int((packet->pts+packet->duration)/1000) << "), ChapterStart:" << m_curChapter->startDispTime << std::endl << std::string(reinterpret_cast<char*>(packet->pData), packet->iSize) << std::endl;
 
   return packet;
 }
 
 bool CDemuxTimeline::SeekTime(int time, bool backwords, double* startpts)
 {
-  auto it = m_chapters.lower_bound(time);
-  if (it == m_chapters.end())
+  auto it = m_chapterMap.lower_bound(time);
+  if (it == m_chapterMap.end())
     return false;
-  m_pCurChapter = &it->second;
-  m_pCurDemuxInfo = m_pCurChapter->pDemuxerInfo;
-  return m_pCurChapter->pDemuxerInfo->pDemuxer->SeekTime(time - m_pCurChapter->shiftTime(), backwords, startpts);
+
+  CLog::Log(LOGDEBUG, "TimelineDemuxer: Switch Demuxer");
+  m_curChapter = it->second;
+  bool result = m_curChapter->demuxer->SeekTime(time - m_curChapter->shiftTime(), backwords, startpts);
+  if (result && startpts)
+    (*startpts) += m_curChapter->shiftTime();
+  return result;
 }
 
 bool CDemuxTimeline::SeekChapter(int chapter, double* startpts)
 {
-  auto it = m_chapters.begin();
-  for (int i = 0; i != chapter && it != m_chapters.end(); ++it, ++i);
-  if (it != m_chapters.end())
-    m_pCurChapter = &it->second;
-  return m_pCurChapter->pDemuxerInfo->pDemuxer->SeekTime(m_pCurChapter->startSrcTime, true, startpts);
+  --chapter;
+  if (chapter < 0 || unsigned(chapter) >= m_chapters.size())
+    return false;
+  CLog::Log(LOGDEBUG, "TimelineDemuxer: Switch Demuxer");
+  m_curChapter = &m_chapters[chapter];
+  bool result = m_curChapter->demuxer->SeekTime(m_curChapter->startSrcTime, true, startpts);
+  if (result && startpts)
+    (*startpts) += m_curChapter->shiftTime();
+  return result;
 }
 
 int CDemuxTimeline::GetChapterCount()
@@ -214,80 +179,66 @@ int CDemuxTimeline::GetChapterCount()
 
 int CDemuxTimeline::GetChapter()
 {
-  return m_pCurChapter->index;
+  return m_curChapter->index + 1;
 }
 
 void CDemuxTimeline::GetChapterName(std::string& strChapterName, int chapterIdx)
 {
-  auto it = m_chapters.begin();
-  for (int i = 0; i != chapterIdx && it != m_chapters.end(); ++it, ++i);
-  if (it != m_chapters.end())
-    strChapterName = it->second.title;
+  --chapterIdx;
+  if (chapterIdx < 0 || unsigned(chapterIdx) >= m_chapters.size())
+    return;
+  strChapterName = m_chapters[chapterIdx].title;
 }
 
 int64_t CDemuxTimeline::GetChapterPos(int chapterIdx)
 {
-  auto it = m_chapters.begin();
-  for (int i = 0; i != chapterIdx && it != m_chapters.end(); ++it, ++i);
-  if (it != m_chapters.end())
-    return it->second.startDispTime;
-  return 0;
+  --chapterIdx;
+  if (chapterIdx < 0 || unsigned(chapterIdx) >= m_chapters.size())
+    return 0;
+  return m_chapters[chapterIdx].startDispTime / 1000;
 }
 
 void CDemuxTimeline::SetSpeed(int iSpeed)
 {
   for (auto &demuxer : m_demuxer)
-    demuxer.pDemuxer->SetSpeed(iSpeed);
+    demuxer->SetSpeed(iSpeed);
 }
 
 int CDemuxTimeline::GetStreamLength()
 {
-  return m_chapters.rbegin()->first;
+  return m_chapterMap.rbegin()->first;
 }
 
 std::vector<CDemuxStream*> CDemuxTimeline::GetStreams() const
 {
-  //auto res = m_pCurDemuxInfo->pDemuxer->GetStreams();
-  auto res = m_pPrimaryDemuxer->GetStreams();
-  decltype(res) cpy;
-  for (auto &elem : res)
-    //if (elem->type != STREAM_SUBTITLE)
-      cpy.push_back(elem);
-  return cpy;
+  return m_primaryDemuxer->GetStreams();
 }
 
 int CDemuxTimeline::GetNrOfStreams() const
 {
-  return m_pPrimaryDemuxer->GetNrOfStreams();
+  return m_primaryDemuxer->GetNrOfStreams();
 }
 
 std::string CDemuxTimeline::GetFileName()
 {
-  return m_pPrimaryDemuxer->GetFileName();
+  return m_primaryDemuxer->GetFileName();
 }
 
 void CDemuxTimeline::EnableStream(int id, bool enable)
 {
   for (auto &demuxer : m_demuxer)
-    demuxer.pDemuxer->EnableStream(demuxer.pDemuxer->GetDemuxerId(), id, enable);
+    demuxer->EnableStream(demuxer->GetDemuxerId(), id, enable);
 }
 
 CDemuxStream* CDemuxTimeline::GetStream(int iStreamId) const
 {
-  return m_pPrimaryDemuxer->GetStream(m_pPrimaryDemuxer->GetDemuxerId(), iStreamId);
+  return m_primaryDemuxer->GetStream(m_primaryDemuxer->GetDemuxerId(), iStreamId);
 }
 
 std::string CDemuxTimeline::GetStreamCodecName(int iStreamId)
 {
-  return m_pPrimaryDemuxer->GetStreamCodecName(m_pPrimaryDemuxer->GetDemuxerId(), iStreamId);
-  //return m_pCurDemuxInfo->pDemuxer->GetStreamCodecName(m_pCurDemuxInfo->pDemuxer->GetDemuxerId(), iStreamId);
+  return m_primaryDemuxer->GetStreamCodecName(m_primaryDemuxer->GetDemuxerId(), iStreamId);
 }
-
-//int CDemuxTimeline::GetNrOfStreams(StreamType streamType)
-//{
-//  return m_pCurDemuxInfo->pDemuxer->GetNrOfStreams(m_pCurDemuxInfo->pDemuxer->GetDemuxerId(), streamType);
-//}
-
 
 
 // vim: ts=2 sw=2 expandtab
