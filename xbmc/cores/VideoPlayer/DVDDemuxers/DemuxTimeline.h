@@ -15,6 +15,7 @@ public:
   virtual ~CDemuxTimeline();
 
   static CDemuxTimeline* CreateTimeline(CDVDDemux *primaryDemuxer);
+  static CDemuxTimeline* CreateTimelineFromEbml(CDVDDemux *primaryDemuxer);
 
   void Reset() override;
   void Abort() override;

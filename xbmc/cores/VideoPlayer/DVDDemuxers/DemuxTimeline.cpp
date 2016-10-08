@@ -5,22 +5,87 @@
 #include "DVDClock.h"
 #include "DVDDemuxPacket.h"
 #include "DVDFactoryDemuxer.h"
+#include "DVDDemuxFFmpeg.h"
 #include "DVDInputStreams/DVDInputStreamFile.h"
 #include "DVDInputStreams/DVDFactoryInputStream.h"
 #include "filesystem/File.h"
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 
-CDemuxTimeline::CDemuxTimeline() {}
+#define EBML_ID_HEADER 0x1A45DFA3
+#define EBML_ID_VOID 0xEC
 
-CDemuxTimeline::~CDemuxTimeline() {}
+#define MATROSKA_ID_SEGMENT 0x18538067
+
+#define MATROSKA_ID_SEEKHEAD 0x114D9B74
+
+#define MATROSKA_ID_INFO 0x1549A966
+#define MATROSKA_ID_SEGMENTUID 0x73A4
+
+#define MATROSKA_ID_CHAPTERS 0x1043A770
+
+#define MATROSKA_ID_SEEK 0x4DBB
+#define MATROSKA_ID_SEEKID 0x53AB
+
+int64_t ReadEbmlValue(CDVDInputStream *input)
+{
+  int64_t id;
+  uint8_t first, byte;
+  input->Read(&first, 1);
+  id = first;
+  for (int mask = 1 << 7; mask && (first & mask) == 0; mask >>= 1)
+  {
+    if (!input->Read(&byte, 1))
+      return -1;
+    id <<= 8;
+    id |= byte;
+  }
+  return id;
+}
+
+void ReadEbmlTag(CDVDInputStream *input)
+{
+  int64_t id, len;
+  id = ReadEbmlValue(input);
+  len = ReadEbmlValue(input);
+}
+
+CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer)
+{
+  int64_t id, len;
+  std::unique_ptr<CDVDInputStreamFile> inStream(new CDVDInputStreamFile(CFileItem(primaryDemuxer->GetFileName(), false)));
+  if (!inStream->Open())
+    return nullptr;
+  CDVDInputStream *input = inStream.get();
+  id = ReadEbmlValue(input);
+  if (id != EBML_ID_HEADER)
+    return nullptr;
+  len = ReadEbmlValue(input);
+  input->Seek(len, SEEK_CUR);
+  id = ReadEbmlValue(input);
+  if (id != MATROSKA_ID_SEGMENT)
+    return nullptr;
+  int64_t segLen = ReadEbmlValue(input);
+  id = ReadEbmlValue(input);
+  len = ReadEbmlValue(input);
+  switch (id)
+  {
+    case MATROSKA_ID_INFO:
+      break;
+    case MATROSKA_ID_SEEKHEAD:
+      break;
+    default:
+      break;
+  }
+  return nullptr;
+}
 
 CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
 {
   std::string filename = demuxer->GetFileName();
   std::string csvFilename = filename + ".OrderedChapters.csv";
   if (!XFILE::CFile::Exists(csvFilename))
-    return nullptr;
+    return CreateTimelineFromEbml(demuxer);
 
   std::string dirname = filename.substr(0, filename.rfind('/') + 1);
 
@@ -78,6 +143,10 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
   timeline->m_curChapter = &timeline->m_chapters.front();
   return timeline;
 }
+
+CDemuxTimeline::CDemuxTimeline() {}
+
+CDemuxTimeline::~CDemuxTimeline() {}
 
 bool CDemuxTimeline::SwitchToNextDemuxer()
 {
