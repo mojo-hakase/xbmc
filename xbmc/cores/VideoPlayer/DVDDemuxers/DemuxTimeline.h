@@ -5,6 +5,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <vector>
 
 class CDemuxTimeline : public CDVDDemux
 {

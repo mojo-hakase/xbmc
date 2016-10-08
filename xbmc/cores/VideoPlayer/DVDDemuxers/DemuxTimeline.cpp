@@ -1,13 +1,11 @@
 #include "DemuxTimeline.h"
 
 #include <algorithm>
-#include <iostream>
-#include <memory>
 
 #include "DVDClock.h"
 #include "DVDDemuxPacket.h"
 #include "DVDFactoryDemuxer.h"
-#include "DVDInputStreams/DVDInputStream.h"
+#include "DVDInputStreams/DVDInputStreamFile.h"
 #include "DVDInputStreams/DVDFactoryInputStream.h"
 #include "filesystem/File.h"
 #include "utils/log.h"
@@ -120,16 +118,18 @@ DemuxPacket* CDemuxTimeline::Read()
   double dispPts;
 
   packet = m_curChapter->demuxer->Read();
-  for (packet && (pts = GET_PTS(packet));
+  packet && (pts = GET_PTS(packet));
+  while (
     !packet ||
     pts + packet->duration < DVD_MSEC_TO_TIME(m_curChapter->startSrcTime) ||
-    pts >= DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime());
-    packet && (pts = GET_PTS(packet)))
+    pts >= DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime())
+  )
   {
     if (!packet || pts >= DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime()))
       if (!SwitchToNextDemuxer())
         return nullptr;
     packet = m_curChapter->demuxer->Read();
+    packet && (pts = GET_PTS(packet));
   }
 
   dispPts = pts + DVD_MSEC_TO_TIME(m_curChapter->shiftTime());
@@ -137,10 +137,6 @@ DemuxPacket* CDemuxTimeline::Read()
   packet->pts = dispPts;
   packet->duration = std::min(packet->duration, DVD_MSEC_TO_TIME(m_curChapter->stopSrcTime()) - pts);
   packet->dispTime = DVD_TIME_TO_MSEC(pts) + m_curChapter->shiftTime();
-  packet->demuxerId = this->GetDemuxerId();
-
-  if (this->GetStream(packet->iStreamId)->type == STREAM_SUBTITLE)
-    std::cout << "PACKET: (" << int(packet->pts/1000) << ")-(" << int((packet->pts+packet->duration)/1000) << "), ChapterStart:" << m_curChapter->startDispTime << std::endl << std::string(reinterpret_cast<char*>(packet->pData), packet->iSize) << std::endl;
 
   return packet;
 }
