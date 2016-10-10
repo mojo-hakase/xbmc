@@ -96,7 +96,7 @@ struct MatroskaFile
   EbmlHeader ebmlHeader;
   MatroskaSegment segment;
 
-  uint64_t segOff, segLen;
+  uint64_t offset, segOff, segLen;
 };
 
 uint32_t ReadEbmlTagID(CDVDInputStream *input)
@@ -266,31 +266,25 @@ bool ParseMatroskaChapters(MatroskaFile *mkv, uint64_t tagEnd, CDVDInputStream *
   return true;
 }
 
-CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer)
+bool ParseMatroskaFile(MatroskaFile *mkv, CDVDInputStream *input, bool parseChapters = false)
 {
-  std::unique_ptr<CDVDInputStreamFile> inStream(new CDVDInputStreamFile(CFileItem(primaryDemuxer->GetFileName(), false)));
-  if (!inStream->Open())
-    return nullptr;
-  CDVDInputStream *input = inStream.get();
-
+  //mkv->offset = input->Seek(0, SEEK_CUR);
+  mkv->offset = 0;
   int64_t id, len;
   id = ReadEbmlTagID(input);
   if (id != EBML_ID_HEADER)
-    return nullptr;
+    return false;
   len = ReadEbmlTagLen(input);
   input->Seek(len, SEEK_CUR);
   id = ReadEbmlTagID(input);
   if (id != MATROSKA_ID_SEGMENT)
-    return nullptr;
-
-  MatroskaFile matroskaFile;
-  MatroskaFile *mkv = &matroskaFile;
+    return false;
   mkv->segLen = ReadEbmlTagLen(input);
   mkv->segOff = input->Seek(0, SEEK_CUR);
 
   while (!input->IsEOF() && !(
     mkv->segment.seekHead.parsed ||
-    (mkv->segment.segInfo.parsed && mkv->segment.chapters.parsed)
+    (mkv->segment.segInfo.parsed && (mkv->segment.chapters.parsed || !parseChapters))
   ))
   {
     id = ReadEbmlTagID(input);
@@ -299,15 +293,15 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer
     {
       case MATROSKA_ID_INFO:
         if (!ParseMatroskaSegmentInfo(mkv, input->Seek(0, SEEK_CUR) + len, input))
-          return nullptr;
+          return false;
         break;
       case MATROSKA_ID_SEEKHEAD:
         if (!ParseMatroskaSeekHead(mkv, input->Seek(0, SEEK_CUR) + len, input))
-          return nullptr;
+          return false;
         break;
       case MATROSKA_ID_CHAPTERS:
-        if (!ParseMatroskaChapters(mkv, input->Seek(0, SEEK_CUR) + len, input))
-          return nullptr;
+        if (parseChapters && !ParseMatroskaChapters(mkv, input->Seek(0, SEEK_CUR) + len, input))
+          return false;
         break;
       default:
         input->Seek(len, SEEK_CUR);
@@ -316,34 +310,49 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer
   }
 
   if (input->IsEOF())
-    return nullptr;
+    return false;
 
   if (!mkv->segment.segInfo.parsed)
   {
     auto it = mkv->segment.seekHead.seekPosition.find(MATROSKA_ID_INFO);
     if (it == mkv->segment.seekHead.seekPosition.end())
-      return nullptr;
+      return false;
     input->Seek(mkv->segOff + it->second, SEEK_SET);
     id = ReadEbmlTagID(input);
     len = ReadEbmlTagLen(input);
     if (id != MATROSKA_ID_INFO)
-      return nullptr;
+      return false;
     if (!ParseMatroskaSegmentInfo(mkv, input->Seek(0, SEEK_CUR) + len, input))
-      return nullptr;
+      return false;
   }
-  if (!mkv->segment.chapters.parsed)
+  if (parseChapters && !mkv->segment.chapters.parsed)
   {
     auto it = mkv->segment.seekHead.seekPosition.find(MATROSKA_ID_CHAPTERS);
     if (it == mkv->segment.seekHead.seekPosition.end())
-      return nullptr;
+      return true;
     input->Seek(mkv->segOff + it->second, SEEK_SET);
     id = ReadEbmlTagID(input);
     len = ReadEbmlTagLen(input);
     if (id != MATROSKA_ID_CHAPTERS)
-      return nullptr;
+      return true;
     if (!ParseMatroskaChapters(mkv, input->Seek(0, SEEK_CUR) + len, input))
-      return nullptr;
+      return true;
   }
+
+  return true;
+}
+
+CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer)
+{
+  std::unique_ptr<CDVDInputStreamFile> inStream(new CDVDInputStreamFile(CFileItem(primaryDemuxer->GetFileName(), false)));
+  if (!inStream->Open())
+    return nullptr;
+  CDVDInputStream *input = inStream.get();
+
+  MatroskaFile matroskaFile;
+  MatroskaFile *mkv = &matroskaFile;
+  if (!ParseMatroskaFile(mkv, input, true))
+    return nullptr;
 
   if (!mkv->segment.chapters.editions.size())
     return nullptr;
@@ -371,11 +380,38 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer
   for (auto &file : files.GetList())
   {
     std::cout << file->GetPath() << std::endl;
-    std::unique_ptr<CDVDInputStream> inStream(CDVDFactoryInputStream::CreateInputStream(nullptr, *file));
-    if (!inStream)
+    timeline->m_inputStreams.emplace_back(CDVDFactoryInputStream::CreateInputStream(nullptr, *file));
+    CDVDInputStream *input = timeline->m_inputStreams.back().get();
+    if (!input)
       continue;
-    if (!inStream->Open())
+    if (!input->Open())
       continue;
+    MatroskaFile mkv2;
+    while (missingSegments.size() && ParseMatroskaFile(&mkv2, input))
+    {
+      auto it = missingSegments.find(mkv2.segment.segInfo.uid);
+      if (it != missingSegments.end())
+      {
+        input->Seek(mkv2.offset, SEEK_SET);
+        std::unique_ptr<CDVDDemuxFFmpeg> demuxer(new CDVDDemuxFFmpeg());
+        if(demuxer->Open(input))
+        {
+          missingSegments.erase(it);
+          extDemuxer[mkv2.segment.segInfo.uid] = demuxer.release();
+          timeline->m_inputStreams.emplace_back(CDVDFactoryInputStream::CreateInputStream(nullptr, *file));
+          input = timeline->m_inputStreams.back().get();
+          if (!input)
+            break;
+          if (!input->Open())
+            break;
+        }
+      }
+      input->Seek(mkv2.segOff + mkv2.segLen, SEEK_SET);
+      mkv2 = MatroskaFile();
+    }
+    timeline->m_inputStreams.pop_back();
+    if (missingSegments.size() == 0)
+      break;
   }
 
   int dispTime = 0;
@@ -420,7 +456,7 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
   CDemuxTimeline *timeline = new CDemuxTimeline;
   timeline->m_primaryDemuxer = demuxer;
   timeline->m_demuxer.emplace_back(demuxer);
-  timeline->m_demuxerInfos[demuxer];
+  //timeline->m_demuxerInfos[demuxer];
 
   int timelineLen = 0;
   XFILE::CFile csvFile;
@@ -452,7 +488,7 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
       if (!chapterDemuxer)
         continue;
       timeline->m_demuxer.emplace_back(chapterDemuxer);
-      timeline->m_demuxerInfos[chapterDemuxer];
+      //timeline->m_demuxerInfos[chapterDemuxer];
     }
     int dispTime = timelineLen;
     timelineLen += (endTime - startTime);
