@@ -144,4 +144,22 @@ bool EbmlMasterParser::operator()(CDVDInputStream *input, uint64_t tagLen)
   return result;
 }
 
+EbmlMasterParser BindEbmlHeaderParser(EbmlHeader *ebmlHeader)
+{
+  EbmlMasterParser master;
+  master.parser[EBML_ID_EBMLVERSION] = BindEbmlUintParser(&ebmlHeader->version);
+  master.parser[EBML_ID_DOCTYPE] = BindEbmlStringParser(&ebmlHeader->doctype);
+  return master;
+}
+
+bool EbmlHeader::Parse(CDVDInputStream *input)
+{
+  uint64_t len;
+  if (EbmlReadId(input) != EBML_ID_HEADER)
+    return false;
+  if (!EbmlReadLen(input, &len))
+    return false;
+  return BindEbmlHeaderParser(this)(input, len);
+}
+
 // vim: ts=2 sw=2 expandtab

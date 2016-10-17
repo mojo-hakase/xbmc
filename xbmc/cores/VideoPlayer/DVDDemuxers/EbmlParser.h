@@ -9,7 +9,7 @@
 
 #include "DVDInputStreams/DVDInputStream.h"
 
-typedef uint32_t EbmlId;
+using EbmlId = uint32_t;
 
 /* top-level master-IDs */
 static const EbmlId EBML_ID_HEADER = 0x1A45DFA3;
@@ -66,6 +66,15 @@ struct EbmlMasterParser
   bool stopOnError = false;
   bool operator()(CDVDInputStream *input, uint64_t tagLen);
 };
+
+struct EbmlHeader
+{
+  uint32_t version = 1;
+  std::string doctype = "matroska";
+  bool Parse(CDVDInputStream *input);
+};
+
+EbmlMasterParser BindEbmlHeaderParser(EbmlHeader *ebmlHeader);
 
 template <typename DataType>
 EbmlParserFunctor BindEbmlUintParser(DataType *output)
