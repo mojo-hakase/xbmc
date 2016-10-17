@@ -16,6 +16,7 @@ public:
 
   static CDemuxTimeline* CreateTimeline(CDVDDemux *primaryDemuxer);
   static CDemuxTimeline* CreateTimelineFromEbml(CDVDDemux *primaryDemuxer);
+  static CDemuxTimeline* CreateTimelineFromMatroskaParser(CDVDDemux *primaryDemuxer);
 
   void Reset() override;
   void Abort() override;
@@ -55,8 +56,19 @@ private:
     int stopSrcTime() {return startSrcTime + duration;}
     int stopDispTime() {return startDispTime + duration;}
     int shiftTime() {return startDispTime - startSrcTime;}
-    unsigned int index;
+    size_t index;
     std::string title;
+
+    ChapterInfo(CDVDDemux *demuxer = nullptr,
+      int startSrcTime = 0, int startDispTime = 0,
+      int duration = 0, size_t index = 0,
+      std::string title = std::string()
+    ) :
+      demuxer(demuxer),
+      startSrcTime(startSrcTime), startDispTime(startDispTime),
+      duration(duration), index(index),
+      title(title)
+    {}
   };
 
   CDVDDemux *m_primaryDemuxer;

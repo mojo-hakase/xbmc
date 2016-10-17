@@ -10,6 +10,7 @@
 #include "DVDInputStreams/DVDFactoryInputStream.h"
 #include "filesystem/File.h"
 #include "filesystem/Directory.h"
+#include "MatroskaParser.h"
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 
@@ -174,8 +175,20 @@ std::string CDemuxTimeline::GetStreamCodecName(int iStreamId)
 }
 
 
+CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
+{
+  return CreateTimelineFromMatroskaParser(demuxer);
+  return CreateTimelineFromEbml(demuxer);
+}
+
+CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *demuxer)
+{
+  MatroskaFile mkv;
+  return nullptr;
+}
 
 
+/*
 #define EBML_ID_HEADER 0x1A45DFA3
 #define EBML_ID_VOID 0xEC
 
@@ -218,7 +231,7 @@ struct MatroskaSegmentInfo
 struct MatroskaChapterAtom
 {
   uint64_t uid;
-  uint64_t timeStart, timeEnd;
+  int timeStart, timeEnd;
   bool flagHidden, flagEnabled;
   MatroskaSegmentUID segUid;
   std::string title;
@@ -357,18 +370,23 @@ bool ParseMatroskaChapterAtom(MatroskaEditionEntry *edition, int64_t tagEnd, CDV
     uint32_t id = ReadEbmlTagID(input);
     uint64_t len = ReadEbmlTagLen(input);
     uint8_t byte;
+    uint64_t uval;
     switch (id)
     {
       case MATROSKA_ID_CHAPTERTIMESTART:
-        for (atom.timeStart = 0; len > 0 && input->Read(&byte, 1); --len)
-          atom.timeStart = (atom.timeStart << 8) | byte;
+        for (uval = 0; len > 0 && input->Read(&byte, 1); --len)
+          uval = (uval << 8) | byte;
+        uval /= 1000000;
+        atom.timeStart = int(uval);
         break;
       case MATROSKA_ID_CHAPTERTIMEEND:
-        for (atom.timeEnd = 0; len > 0 && input->Read(&byte, 1); --len)
-          atom.timeEnd = (atom.timeEnd << 8) | byte;
+        for (uval = 0; len > 0 && input->Read(&byte, 1); --len)
+          uval = (uval << 8) | byte;
+        uval /= 1000000;
+        atom.timeEnd = int(uval);
         break;
       case MATROSKA_ID_CHAPTERSEGMENTUID:
-        atom.segUid.resize(std::min(len, 16UL));
+        atom.segUid.resize((len < 16) ? len : 16);
         input->Read((uint8_t*)atom.segUid.data(), atom.segUid.size());
         if (len > 16)
           input->Seek(len - 16, SEEK_CUR);
@@ -376,7 +394,7 @@ bool ParseMatroskaChapterAtom(MatroskaEditionEntry *edition, int64_t tagEnd, CDV
       case MATROSKA_ID_CHAPTERDISPLAY:
         break;
       case MATROSKA_ID_CHAPTERSTRING:
-        atom.title.resize(std::min(len, 0x1000UL));
+        atom.title.resize((len < 0x1000) ? len : 0x1000);
         input->Read((uint8_t*)atom.title.data(), atom.title.size());
         if (len > atom.title.size())
           input->Seek(len - atom.title.size(), SEEK_CUR);
@@ -589,14 +607,14 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer
   for (auto &chapter : edition.chapterAtoms)
     if ((it = extDemuxer.find(chapter.segUid)) != extDemuxer.end())
     {
-      timeline->m_chapters.emplace_back(ChapterInfo {
-        .demuxer = it->second,
-        .startSrcTime = chapter.timeStart / 1000000,
-        .startDispTime = dispTime,
-        .duration = (chapter.timeEnd - chapter.timeStart) / 1000000,
-        .index = timeline->m_chapters.size(),
-        .title = chapter.title
-      });
+      timeline->m_chapters.emplace_back(
+        it->second,
+        chapter.timeStart,
+        dispTime,
+        (chapter.timeEnd - chapter.timeStart),
+        timeline->m_chapters.size(),
+        chapter.title
+      );
       dispTime += timeline->m_chapters.back().duration;
     }
 
@@ -609,10 +627,6 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromEbml(CDVDDemux *primaryDemuxer
   timeline->m_curChapter = &timeline->m_chapters.front();
   return timeline.release();
 }
-
-CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
-{
-  return CreateTimelineFromEbml(demuxer);
-}
+*/
 
 // vim: ts=2 sw=2 expandtab
