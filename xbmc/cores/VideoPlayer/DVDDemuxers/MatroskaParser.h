@@ -15,6 +15,7 @@ struct MatroskaChapterAtom
   MatroskaSegmentUID segUid;
   uint64_t segEditionUid = 0;
   MatroskaChapterDisplayMap displays;
+  std::list<MatroskaChapterAtom> subChapters;
 };
 
 struct MatroskaEdition
@@ -41,7 +42,8 @@ struct MatroskaSegmentInfo
 
 struct MatroskaSegment
 {
-  int64_t offset;
+  int64_t offsetBegin;
+  int64_t offsetEnd;
   MatroskaSegmentInfo infos;
   MatroskaSeekMap seekMap;
   MatroskaChapters chapters;

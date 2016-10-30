@@ -33,6 +33,7 @@ static const EbmlId EBML_ID_RESERVED3 = 0x3FFFFF;
 static const EbmlId EBML_ID_RESERVED4 = 0x1FFFFFFF;
 static const EbmlId EBML_ID_INVALID = 0xFFFFFFFF;
 
+static const uint64_t INVALID_EBML_TAG_LENGTH = 0xFFFFFFFFFFFFFF;
 
 EbmlId EbmlReadId(CDVDInputStream *input);
 bool EbmlReadId(CDVDInputStream *input, EbmlId *output);
@@ -72,6 +73,8 @@ struct EbmlHeader
   uint32_t version = 1;
   std::string doctype = "matroska";
   bool Parse(CDVDInputStream *input);
+  int64_t offsetBegin;
+  int64_t offsetEnd;
 };
 
 EbmlMasterParser BindEbmlHeaderParser(EbmlHeader *ebmlHeader);

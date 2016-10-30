@@ -81,7 +81,7 @@ EbmlId EbmlReadId(CDVDInputStream *input)
 
 uint64_t EbmlReadLen(CDVDInputStream *input)
 {
-  uint64_t len = -1;
+  uint64_t len = INVALID_EBML_TAG_LENGTH;
   EbmlReadLen(input, &len);
   return len;
 }
@@ -112,28 +112,27 @@ EbmlParserFunctor BindEbmlRawParser(std::string *output, uint64_t maxLen)
 bool EbmlParseMaster(CDVDInputStream *input, const ParserMap &parserMap, uint64_t tagLen, bool stopOnError)
 {
   int64_t tagEnd = input->Seek(0, SEEK_CUR) + tagLen;
-  int error = 0;
   while (!input->IsEOF() && input->Seek(0, SEEK_CUR) < tagEnd)
   {
-    EbmlId id = EbmlReadId(input);
-    uint64_t len = EbmlReadLen(input);
+    EbmlId id;
+    uint64_t len;
+    if (!EbmlReadId(input, &id))
+      return false;
+    if (!EbmlReadLen(input, &len))
+      return false;
     int64_t subTagEnd = input->Seek(0, SEEK_CUR) + len;
-    auto parser = parserMap.find(id);
-    if (parser != parserMap.end())
+    auto iterator = parserMap.find(id);
+    if (iterator != parserMap.end())
     {
-      if (!parser->second)
-        break;
-      else if (!parser->second(input, len))
-      {
-        ++error;
-        if (stopOnError)
-          break;
-      }
+      auto parser = iterator->second;
+      if (!parser) // manually forced abort
+        return true;
+      else if (!parser(input, len) && stopOnError)
+        return false;
     }
     input->Seek(subTagEnd, SEEK_SET);
   }
-  input->Seek(tagEnd, SEEK_SET);
-  return !error;
+  return true;
 }
 
 bool EbmlMasterParser::operator()(CDVDInputStream *input, uint64_t tagLen)
@@ -159,6 +158,8 @@ bool EbmlHeader::Parse(CDVDInputStream *input)
     return false;
   if (!EbmlReadLen(input, &len))
     return false;
+  offsetBegin = input->Seek(0, SEEK_CUR);
+  offsetEnd = offsetBegin + len;
   return BindEbmlHeaderParser(this)(input, len);
 }
 

@@ -181,9 +181,16 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
   return CreateTimelineFromEbml(demuxer);
 }
 
-CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *demuxer)
+CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *primaryDemuxer)
 {
+  std::unique_ptr<CDVDInputStreamFile> inStream(new CDVDInputStreamFile(CFileItem(primaryDemuxer->GetFileName(), false)));
+  if (!inStream->Open())
+    return nullptr;
+  CDVDInputStream *input = inStream.get();
+
   MatroskaFile mkv;
+  bool result = mkv.Parse(input);
+  //mkv.segment.chapters.editions.front().flagOrdered;
   return nullptr;
 }
 

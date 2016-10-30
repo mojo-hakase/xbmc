@@ -85,7 +85,7 @@ EbmlMasterParser BindMatroskaSeekEntryParser(MatroskaSeekEntry *seekEntry)
   return master;
 }
 
-EbmlMasterParser BindMatroskaSeekMapParser(MatroskaSeekMap *seekMap, int64_t basePos = 0)
+EbmlMasterParser BindMatroskaSeekMapParser(MatroskaSeekMap *seekMap, int64_t basePos)
 {
   EbmlMasterParser master;
   master.parser[MATROSKA_ID_SEEKENTRY] = [seekMap,basePos](CDVDInputStream *input, uint64_t tagLen)
@@ -108,7 +108,7 @@ struct MatroskaChapterDisplay
 EbmlMasterParser BindMatroskaChapterDisplayParser(MatroskaChapterDisplay *chapDisplay)
 {
   EbmlMasterParser master;
-  master.parser[MATROSKA_ID_CHAPSTRING] = BindEbmlStringParser(&chapDisplay->chapString);
+  master.parser[MATROSKA_ID_CHAPSTRING] = BindEbmlStringParser(&chapDisplay->chapString, 4096);
   master.parser[MATROSKA_ID_CHAPLANG] = BindEbmlListParser(&chapDisplay->chapLangs, BindEbmlStringParser, 32);
   return master;
 }
@@ -136,6 +136,7 @@ EbmlMasterParser BindMatroskaChapterAtomParser(MatroskaChapterAtom *chapAtom)
   master.parser[MATROSKA_ID_CHAPTERFLAGENABLED] = BindEbmlUintParser(&chapAtom->flagEnabled);
   master.parser[MATROSKA_ID_CHAPTERSEGMENTUID] = BindEbmlRawParser(&chapAtom->segUid, 16);
   master.parser[MATROSKA_ID_CHAPTERDISPLAY] = BindMatroskaChapterDisplayMapParser(&chapAtom->displays);
+  master.parser[MATROSKA_ID_CHAPTERATOM] = BindEbmlListParser(&chapAtom->subChapters, BindMatroskaChapterAtomParser);
   return master;
 }
 
@@ -157,10 +158,19 @@ EbmlMasterParser BindMatroskaChaptersParser(MatroskaChapters *chapters)
   return master;
 }
 
+EbmlMasterParser BindMatroskaInfoParser(MatroskaSegmentInfo *infos)
+{
+  EbmlMasterParser master;
+  master.parser[MATROSKA_ID_SEGMENTUID] = BindEbmlRawParser(&infos->uid, 16);
+  master.parser[MATROSKA_ID_TIMECODESCALE] = BindEbmlUintParser(&infos->timecodeScale);
+  return master;
+}
+
 EbmlMasterParser BindMatroskaSegmentParser(MatroskaSegment *segment)
 {
   EbmlMasterParser master;
-  master.parser[MATROSKA_ID_SEEKHEAD] = BindMatroskaSeekMapParser(&segment->seekMap, segment->offset);
+  master.parser[MATROSKA_ID_SEEKHEAD] = BindMatroskaSeekMapParser(&segment->seekMap, segment->offsetBegin);
+  master.parser[MATROSKA_ID_INFO] = BindMatroskaInfoParser(&segment->infos);
   master.parser[MATROSKA_ID_CHAPTERS] = BindMatroskaChaptersParser(&segment->chapters);
   master.parser[MATROSKA_ID_CLUSTER]; // break on cluster
   return master;
@@ -173,7 +183,20 @@ bool MatroskaSegment::Parse(CDVDInputStream *input)
     return false;
   if (!EbmlReadLen(input, &len))
     return false;
+  offsetBegin = input->Seek(0, SEEK_CUR);
+  offsetEnd = offsetBegin + len;
   return BindMatroskaSegmentParser(this)(input, len);
+  while (!input->IsEOF() && input->Seek(0, SEEK_CUR) < offsetEnd)
+  {
+    EbmlId id;
+    uint64_t len;
+    if (!EbmlReadId(input, &id))
+      return false;
+    if (!EbmlReadLen(input, &len))
+      return false;
+    int64_t subTagEnd = input->Seek(0, SEEK_CUR) + len;
+    input->Seek(subTagEnd, SEEK_SET);
+  }
 }
 
 bool MatroskaFile::Parse(CDVDInputStream *input)
@@ -181,9 +204,10 @@ bool MatroskaFile::Parse(CDVDInputStream *input)
   offsetBegin = input->Seek(0, SEEK_CUR);
   if (!ebmlHeader.Parse(input))
     return false;
+  input->Seek(ebmlHeader.offsetEnd, SEEK_SET);
   if (!segment.Parse(input))
     return false;
-  offsetEnd = input->Seek(0, SEEK_CUR);
+  offsetEnd = segment.offsetEnd;
   return true;
 }
 
