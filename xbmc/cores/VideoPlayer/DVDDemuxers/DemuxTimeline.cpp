@@ -190,7 +190,47 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *prim
 
   MatroskaFile mkv;
   bool result = mkv.Parse(input);
-  //mkv.segment.chapters.editions.front().flagOrdered;
+  if (!result)
+    return nullptr;
+
+   // multiple editions unsupported (at the moment)
+  if (mkv.segment.chapters.editions.size() != 1)
+    return nullptr;
+  auto &edition = mkv.segment.chapters.editions.front();
+  // only handle ordered chapters
+  if (!edition.flagOrdered)
+    return nullptr;
+
+  std::unique_ptr<CDemuxTimeline> timeline(new CDemuxTimeline);
+  timeline->m_primaryDemuxer = primaryDemuxer;
+  timeline->m_demuxer.emplace_back(primaryDemuxer);
+
+  // collect needed segment uids
+  std::set<MatroskaSegmentUID> neededSegmentUIDs;
+  for (auto &chapter : edition.chapterAtoms)
+    if (chapter.segUid.size() != 0 && chapter.segUid != mkv.segment.infos.uid)
+      neededSegmentUIDs.insert(chapter.segUid);
+
+  // find linked segments
+  std::list<std::string> searchDirs({""}); // should be a global setting
+  std::string filename = primaryDemuxer->GetFileName();
+  std::string dirname = filename.substr(0, filename.rfind('/') + 1);
+  for (auto &subDir : searchDirs)
+  {
+    if (neededSegmentUIDs.size() == 0)
+      break;
+    CFileItemList files;
+    XFILE::CDirectory::GetDirectory(dirname + subDir, files, ".mkv");
+    for (auto &file : files.GetList())
+    {
+      //timeline->m_inputStreams.emplace_back(CDVDFactoryInputStream::CreateInputStream(nullptr, *file));
+      //CDVDInputStream *input2 = timeline->m_inputStreams.back().get();
+      //MatroskaFile mkv2;
+      //if (!mkv2.Parse(input2))
+      //  continue;
+    }
+  }
+
   return nullptr;
 }
 
