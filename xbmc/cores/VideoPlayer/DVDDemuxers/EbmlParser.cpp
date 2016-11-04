@@ -30,7 +30,7 @@ bool EbmlReadLen(CDVDInputStream *input, uint64_t *output)
     return false;
   for (len = 1, mask = 1 << 7; len < 8 && (byte & mask) == 0; ++len, mask >>= 1);
   result = byte & ~mask;
-  for (; len > 0; --len)
+  for (; len > 1; --len)
   {
     if (!input->Read(&byte, 1))
       return false;
@@ -44,7 +44,7 @@ bool EbmlReadLen(CDVDInputStream *input, uint64_t *output)
 bool EbmlReadUint(CDVDInputStream *input, uint64_t *output, uint64_t len)
 {
   uint8_t byte;
-  uint64_t result;
+  uint64_t result = 0;
   for (uint64_t i = 0; i < len; ++i)
   {
     if (!input->Read(&byte, 1))
@@ -59,7 +59,7 @@ bool EbmlReadString(CDVDInputStream *input, std::string *output, uint64_t len)
 {
   if (!EbmlReadRaw(input, output, len))
     return false;
-  output->resize(output->find('\0'));
+  output->resize(std::min(output->size(), output->find('\0')));
   return true;
 }
 
