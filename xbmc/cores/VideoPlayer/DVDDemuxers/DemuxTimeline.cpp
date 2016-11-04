@@ -181,6 +181,19 @@ CDemuxTimeline* CDemuxTimeline::CreateTimeline(CDVDDemux *demuxer)
   return CreateTimelineFromEbml(demuxer);
 }
 
+std::string segUidToHex(std::string uid)
+{
+	const char *hex = "0123456789abcdef";
+	std::string result("0x");
+	result.reserve(18);
+	for (unsigned char twoDigits : uid)
+	{
+		result.append(1, hex[(twoDigits >> 4) & 0xf]);
+		result.append(1, hex[twoDigits & 0xf]);
+	}
+	return result;
+}
+
 CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *primaryDemuxer)
 {
   std::unique_ptr<CDVDInputStreamFile> inStream(new CDVDInputStreamFile(CFileItem(primaryDemuxer->GetFileName(), false)));
@@ -212,6 +225,9 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *prim
       neededSegmentUIDs.insert(chapter.segUid);
 
   // find linked segments
+  std::map<MatroskaSegmentUID,CDVDDemux*> segmentDemuxer;
+  segmentDemuxer[""] = primaryDemuxer;
+  segmentDemuxer[mkv.segment.infos.uid] = primaryDemuxer;
   std::list<std::string> searchDirs({""}); // should be a global setting
   std::string filename = primaryDemuxer->GetFileName();
   std::string dirname = filename.substr(0, filename.rfind('/') + 1);
@@ -223,15 +239,59 @@ CDemuxTimeline* CDemuxTimeline::CreateTimelineFromMatroskaParser(CDVDDemux *prim
     XFILE::CDirectory::GetDirectory(dirname + subDir, files, ".mkv");
     for (auto &file : files.GetList())
     {
-      //timeline->m_inputStreams.emplace_back(CDVDFactoryInputStream::CreateInputStream(nullptr, *file));
-      //CDVDInputStream *input2 = timeline->m_inputStreams.back().get();
-      //MatroskaFile mkv2;
-      //if (!mkv2.Parse(input2))
-      //  continue;
+      std::unique_ptr<CDVDInputStreamFile> uInput2(new CDVDInputStreamFile(*file));
+      CDVDInputStream *input2 = uInput2.get();
+      if (!input2->Open())
+        continue;
+      MatroskaFile mkv2;
+      if (!mkv2.Parse(input2))
+        continue;
+      if (neededSegmentUIDs.erase(mkv2.segment.infos.uid) == 0)
+        continue;
+      input2->Seek(mkv2.offsetBegin, SEEK_SET);
+      std::unique_ptr<CDVDDemuxFFmpeg> demuxer(new CDVDDemuxFFmpeg());
+      if(demuxer->Open(input2))
+      {
+        segmentDemuxer[mkv2.segment.infos.uid] = demuxer.get();
+        timeline->m_demuxer.emplace_back(std::move(demuxer));
+        timeline->m_inputStreams.emplace_back(std::move(uInput2));
+      }
+      if (neededSegmentUIDs.size() == 0)
+        break;
     }
   }
 
-  return nullptr;
+  // build timeline
+  for (auto &segUid : neededSegmentUIDs)
+    CLog::Log(LOGERROR,
+      "TimelineDemuxer: Could not find matroska segment for segment linking: %s",
+      segUidToHex(segUid).c_str()
+    );
+
+  int dispTime = 0;
+  decltype(segmentDemuxer.begin()) it;
+  for (auto &chapter : edition.chapterAtoms)
+    if ((it = segmentDemuxer.find(chapter.segUid)) != segmentDemuxer.end())
+    {
+      timeline->m_chapters.emplace_back(
+        it->second,
+        chapter.timeStart / 1000000,
+        dispTime,
+        (chapter.timeEnd - chapter.timeStart) / 1000000,
+        timeline->m_chapters.size(),
+        chapter.displays.GetDefault()
+      );
+      dispTime += timeline->m_chapters.back().duration;
+    }
+
+  if (!timeline->m_chapters.size())
+    return nullptr;
+
+  for (auto &chapter : timeline->m_chapters)
+    timeline->m_chapterMap[chapter.stopDispTime() - 1] = &chapter;
+
+  timeline->m_curChapter = &timeline->m_chapters.front();
+  return timeline.release();
 }
 
 

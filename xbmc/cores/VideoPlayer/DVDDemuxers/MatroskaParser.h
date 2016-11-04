@@ -3,13 +3,17 @@
 #include "EbmlParser.h"
 
 using MatroskaSegmentUID = std::string;
-using MatroskaChapterDisplayMap = std::map<std::string,std::string>;
+//using MatroskaChapterDisplayMap = std::map<std::string,std::string>;
+struct MatroskaChapterDisplayMap : std::map<std::string,std::string>
+{
+  std::string GetDefault();
+};
 
 struct MatroskaChapterAtom
 {
   uint64_t uid = 0;
-  int timeStart = 0;
-  int timeEnd = 0;
+  uint64_t timeStart = 0;
+  uint64_t timeEnd = 0;
   bool flagHidden = false;
   bool flagEnabled = false;
   MatroskaSegmentUID segUid;

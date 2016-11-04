@@ -69,7 +69,6 @@ static const EbmlId MATROSKA_ID_CHAPLANG = 0x437C;
 static const EbmlId MATROSKA_ID_CHAPCOUNTRY = 0x437E;
 static const EbmlId MATROSKA_ID_CHAPTERPHYSEQUIV = 0x63C3;
 
-
 struct MatroskaSeekEntry
 {
   EbmlId seekId = 0;
@@ -124,6 +123,22 @@ EbmlParserFunctor BindMatroskaChapterDisplayMapParser(MatroskaChapterDisplayMap 
         (*displays)[elem] = disp.chapString;
       return true;
     };
+}
+
+std::string MatroskaChapterDisplayMap::GetDefault()
+{
+  if (this->size() == 0)
+    return std::string();
+  if (this->size() == 1)
+    return this->begin()->second;
+  decltype(this->begin()) iterator;
+  //if (this->end() != (iterator = this->find(GUILanguage))) // where to get the gui language from
+  //  return iterator->second;
+  if (this->end() != (iterator = this->find("eng")))
+    return iterator->second;
+  if (this->end() != (iterator = this->find("und")))
+    return iterator->second;
+  return this->begin()->second;
 }
 
 EbmlMasterParser BindMatroskaChapterAtomParser(MatroskaChapterAtom *chapAtom)

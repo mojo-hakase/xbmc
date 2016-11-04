@@ -65,8 +65,13 @@ bool EbmlReadString(CDVDInputStream *input, std::string *output, uint64_t len)
 
 bool EbmlReadRaw(CDVDInputStream *input, std::string *output, uint64_t len)
 {
+  if (len == 0)
+    return output->clear(), true;
   std::string result(len, '\0');
-  if (!input->Read(reinterpret_cast<uint8_t*>(const_cast<char*>(result.data())), len))
+  if (result.size() != len)
+    return false;
+  // the following is safe since C++11
+  if (!input->Read(reinterpret_cast<uint8_t*>(&result[0]), len))
     return false;
   (*output) = std::move(result);
   return true;
