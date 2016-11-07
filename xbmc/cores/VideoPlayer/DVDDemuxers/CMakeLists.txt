@@ -2,6 +2,7 @@ set(SOURCES DemuxMultiSource.cpp
             DemuxTimeline.cpp
 	    EbmlParser.cpp
 	    MatroskaParser.cpp
+	    MatroskaSegmentCache.cpp
             DVDDemux.cpp
             DVDDemuxBXA.cpp
             DVDDemuxCC.cpp
@@ -16,6 +17,7 @@ set(HEADERS DemuxMultiSource.h
             DemuxTimeline.h
 	    EbmlParser.h
 	    MatroskaParser.h
+	    MatroskaSegmentCache.h
             DVDDemux.h
             DVDDemuxBXA.h
             DVDDemuxCC.h
